@@ -58,26 +58,30 @@ def fetch_forecast():
 
     lines = resp.text.splitlines()
 
-    # Skip comment/metadata lines starting with '#'
-    data_lines = [l for l in lines if not l.startswith("#")]
+    # Open-Meteo CSV has metadata rows at the top (lat, lon, elevation, etc.)
+    # before the actual header row that starts with "time".
+    # Find the header row by looking for the line starting with "time".
+    header_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("time"):
+            header_idx = i
+            break
 
-    # Print headers for debugging
-    if data_lines:
-        print(f"  CSV headers: {data_lines[0]}")
+    if header_idx is None:
+        raise ValueError(f"Could not find 'time' header row in CSV. First few lines: {lines[:5]}")
 
-    # Parse by column index (0=time/date, 1=max temp, 2=min temp)
-    # This avoids any header name encoding issues
+    print(f"  Found data header at line {header_idx}: {lines[header_idx]}")
+
     rows = []
-    for i, line in enumerate(data_lines):
-        if i == 0:
-            continue  # skip header row
+    for line in lines[header_idx + 1:]:
+        if not line.strip():
+            continue
         parts = line.split(",")
         if len(parts) < 3:
             continue
         date_val = parts[0].strip()
         max_val  = parts[1].strip()
         min_val  = parts[2].strip()
-        # Skip any non-date rows (e.g. empty lines)
         if not date_val or not date_val[0].isdigit():
             continue
         rows.append({"date": date_val, "max": max_val, "min": min_val})
@@ -89,8 +93,8 @@ def fetch_forecast():
 # ── Step 2: Clear existing rows ───────────────────────────────────────────────
 
 def get_existing_row_ids(token):
-    # includeAll=true fetches every row in one request (no pagination needed)
-    url = f"{SMARTSHEET_API}/sheets/{SHEET_ID}/rows?includeAll=true"
+    # Fetch the full sheet; rows array contains all row IDs
+    url = f"{SMARTSHEET_API}/sheets/{SHEET_ID}?include=rowIds"
     resp = requests.get(url, headers=ss_headers(token), timeout=60)
     resp.raise_for_status()
     data = resp.json()
@@ -117,7 +121,6 @@ def delete_rows(token, row_ids):
 # ── Step 3: Insert new rows ───────────────────────────────────────────────────
 
 def build_rows(forecast):
-    """Build Smartsheet row payload from forecast list."""
     rows = []
     for f in forecast:
         rows.append({
