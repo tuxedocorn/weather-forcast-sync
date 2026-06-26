@@ -1,0 +1,28 @@
+name: Weather Sync
+
+on:
+  schedule:
+    - cron: "0 13 * * *"   # 7:00 AM MDT (UTC-6)
+    - cron: "0 20 * * *"   # 2:00 PM MDT (UTC-6)
+  workflow_dispatch:        # allow manual trigger anytime
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run weather sync
+        env:
+          SMARTSHEET_TOKEN: ${{ secrets.SMARTSHEET_TOKEN }}
+        run: python weather_sync.py
