@@ -11,12 +11,12 @@ import requests
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-SHEET_ID = "wPPcCrWJQ5vpGgm6C3MR22W7pHqGQ5Gwjhc5rxx1"
+SHEET_ID = 8274999350611844  # numeric ID required by REST API
 
 # Column IDs (do not change — other columns have formulas we leave alone)
-COL_DATE    = 2351625581318020
-COL_MAX     = 6855225208688516
-COL_MIN     = 1225725674475396
+COL_DATE = 2351625581318020
+COL_MAX  = 6855225208688516
+COL_MIN  = 1225725674475396
 
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -58,24 +58,29 @@ def fetch_forecast():
 
     lines = resp.text.splitlines()
 
-    # Open-Meteo CSV structure:
-    #   Row 0: #latitude=38.6639          ← skip
-    #   Row 1: #longitude=-107.985372     ← skip
-    #   Row 2: #elevation=...             ← skip (may vary)
-    #   Row N: header row (time,temperature_2m_max (°F),temperature_2m_min (°F))
-    #   Rows N+1...: data
-
     # Skip comment/metadata lines starting with '#'
     data_lines = [l for l in lines if not l.startswith("#")]
 
-    reader = csv.DictReader(data_lines)
+    # Print headers for debugging
+    if data_lines:
+        print(f"  CSV headers: {data_lines[0]}")
+
+    # Parse by column index (0=time/date, 1=max temp, 2=min temp)
+    # This avoids any header name encoding issues
     rows = []
-    for row in reader:
-        date_val = row.get("time", "").strip()
-        max_val  = row.get("temperature_2m_max (°F)", "").strip()
-        min_val  = row.get("temperature_2m_min (°F)", "").strip()
-        if date_val and max_val and min_val:
-            rows.append({"date": date_val, "max": max_val, "min": min_val})
+    for i, line in enumerate(data_lines):
+        if i == 0:
+            continue  # skip header row
+        parts = line.split(",")
+        if len(parts) < 3:
+            continue
+        date_val = parts[0].strip()
+        max_val  = parts[1].strip()
+        min_val  = parts[2].strip()
+        # Skip any non-date rows (e.g. empty lines)
+        if not date_val or not date_val[0].isdigit():
+            continue
+        rows.append({"date": date_val, "max": max_val, "min": min_val})
 
     print(f"  Parsed {len(rows)} forecast days")
     return rows
@@ -84,8 +89,9 @@ def fetch_forecast():
 # ── Step 2: Clear existing rows ───────────────────────────────────────────────
 
 def get_existing_row_ids(token):
-    url = f"{SMARTSHEET_API}/sheets/{SHEET_ID}/rows"
-    resp = requests.get(url, headers=ss_headers(token), timeout=30)
+    # includeAll=true fetches every row in one request (no pagination needed)
+    url = f"{SMARTSHEET_API}/sheets/{SHEET_ID}/rows?includeAll=true"
+    resp = requests.get(url, headers=ss_headers(token), timeout=60)
     resp.raise_for_status()
     data = resp.json()
     return [r["id"] for r in data.get("rows", [])]
@@ -97,13 +103,15 @@ def delete_rows(token, row_ids):
         return
     # Smartsheet allows up to 450 row IDs per delete request
     chunk_size = 450
+    total = 0
     for i in range(0, len(row_ids), chunk_size):
         chunk = row_ids[i:i + chunk_size]
         ids_param = ",".join(str(rid) for rid in chunk)
         url = f"{SMARTSHEET_API}/sheets/{SHEET_ID}/rows?ids={ids_param}"
-        resp = requests.delete(url, headers=ss_headers(token), timeout=30)
+        resp = requests.delete(url, headers=ss_headers(token), timeout=60)
         resp.raise_for_status()
-    print(f"  Deleted {len(row_ids)} existing rows")
+        total += len(chunk)
+    print(f"  Deleted {total} existing rows")
 
 
 # ── Step 3: Insert new rows ───────────────────────────────────────────────────
@@ -138,6 +146,8 @@ def main():
 
     # 1. Fetch forecast
     forecast = fetch_forecast()
+    if not forecast:
+        raise ValueError("No forecast data parsed — aborting to avoid wiping sheet")
 
     # 2. Clear sheet
     print("Clearing existing rows...")
